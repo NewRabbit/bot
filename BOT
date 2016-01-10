@@ -1,81 +1,81 @@
-1 package.path = package.path .. ';.luarocks/share/lua/5.2/?.lua' 
-2   ..';.luarocks/share/lua/5.2/?/init.lua' 
-3 package.cpath = package.cpath .. ';.luarocks/lib/lua/5.2/?.so' 
-4 
+package.path = package.path .. ';.luarocks/share/lua/5.2/?.lua' 
+ ..';.luarocks/share/lua/5.2/?/init.lua' 
+package.cpath = package.cpath .. ';.luarocks/lib/lua/5.2/?.so' 
+
  
-5 require("./bot/utils") 
-6 
+require("./bot/utils") 
+
  
-7 VERSION = '1.0' 
-8 
+VERSION = '1.0' 
+
  
-9 -- This function is called when tg receive a msg 
-10 function on_msg_receive (msg) 
-11   if not started then 
-12     return 
-13   end 
-14 
+-- This function is called when tg receive a msg 
+function on_msg_receive (msg) 
+  if not started then 
+    return 
+  end 
+
  
-15   local receiver = get_receiver(msg) 
-16   print (receiver) 
-17 
+  local receiver = get_receiver(msg) 
+  print (receiver) 
+
  
-18   -- vardump(msg) 
-19   msg = pre_process_service_msg(msg) 
-20   if msg_valid(msg) then 
-21     msg = pre_process_msg(msg) 
-22     if msg then 
-23       match_plugins(msg) 
-24   --   mark_read(receiver, ok_cb, false) 
-25     end 
-26   end 
-27 end 
-28 
+  -- vardump(msg) 
+  msg = pre_process_service_msg(msg) 
+  if msg_valid(msg) then 
+    msg = pre_process_msg(msg) 
+    if msg then 
+      match_plugins(msg) 
+  --   mark_read(receiver, ok_cb, false) 
+    end 
+  end 
+end 
+
  
-29 function ok_cb(extra, success, result) 
-30 end 
-31 
+function ok_cb(extra, success, result) 
+end 
+
  
-32 function on_binlog_replay_end() 
-33   started = true 
-34   postpone (cron_plugins, false, 60*5.0) 
-35 
+function on_binlog_replay_end() 
+  started = true 
+  postpone (cron_plugins, false, 60*5.0) 
+
  
-36   _config = load_config() 
-37 
+  _config = load_config() 
+
  
-38   -- load plugins 
-39   plugins = {} 
-40   load_plugins() 
-41 end 
-42 
+  -- load plugins 
+  plugins = {} 
+  load_plugins() 
+end 
+
  
-43 function msg_valid(msg) 
-44   -- Don't process outgoing messages 
-45   if msg.out then 
-46     print('\27[36mNot valid: msg from us\27[39m') 
-47     return false 
-48   end 
-49 
+function msg_valid(msg) 
+  -- Don't process outgoing messages 
+  if msg.out then 
+    print('\27[36mNot valid: msg from us\27[39m') 
+    return false 
+  end 
+
  
-50   -- Before bot was started 
-51   if msg.date < now then 
-52     print('\27[36mNot valid: old msg\27[39m') 
-53     return false 
-54   end 
-55 
+  -- Before bot was started 
+  if msg.date < now then 
+    print('\27[36mNot valid: old msg\27[39m') 
+    return false 
+  end 
+
  
-56   if msg.unread == 0 then 
-57     print('\27[36mNot valid: readed\27[39m') 
-58     return false 
-59   end 
-60 
+  if msg.unread == 0 then 
+    print('\27[36mNot valid: readed\27[39m') 
+    return false 
+  end 
+
  
-61   if not msg.to.id then 
-62     print('\27[36mNot valid: To id not provided\27[39m') 
-63     return false 
-64   end 
-65 
+  if not msg.to.id then 
+    print('\27[36mNot valid: To id not provided\27[39m') 
+    return false 
+  end 
+
  
 66   if not msg.from.id then 
 67     print('\27[36mNot valid: From id not provided\27[39m') 
