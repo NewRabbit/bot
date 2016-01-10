@@ -1,0 +1,492 @@
+1 package.path = package.path .. ';.luarocks/share/lua/5.2/?.lua' 
+2   ..';.luarocks/share/lua/5.2/?/init.lua' 
+3 package.cpath = package.cpath .. ';.luarocks/lib/lua/5.2/?.so' 
+4 
+ 
+5 require("./bot/utils") 
+6 
+ 
+7 VERSION = '1.0' 
+8 
+ 
+9 -- This function is called when tg receive a msg 
+10 function on_msg_receive (msg) 
+11   if not started then 
+12     return 
+13   end 
+14 
+ 
+15   local receiver = get_receiver(msg) 
+16   print (receiver) 
+17 
+ 
+18   -- vardump(msg) 
+19   msg = pre_process_service_msg(msg) 
+20   if msg_valid(msg) then 
+21     msg = pre_process_msg(msg) 
+22     if msg then 
+23       match_plugins(msg) 
+24   --   mark_read(receiver, ok_cb, false) 
+25     end 
+26   end 
+27 end 
+28 
+ 
+29 function ok_cb(extra, success, result) 
+30 end 
+31 
+ 
+32 function on_binlog_replay_end() 
+33   started = true 
+34   postpone (cron_plugins, false, 60*5.0) 
+35 
+ 
+36   _config = load_config() 
+37 
+ 
+38   -- load plugins 
+39   plugins = {} 
+40   load_plugins() 
+41 end 
+42 
+ 
+43 function msg_valid(msg) 
+44   -- Don't process outgoing messages 
+45   if msg.out then 
+46     print('\27[36mNot valid: msg from us\27[39m') 
+47     return false 
+48   end 
+49 
+ 
+50   -- Before bot was started 
+51   if msg.date < now then 
+52     print('\27[36mNot valid: old msg\27[39m') 
+53     return false 
+54   end 
+55 
+ 
+56   if msg.unread == 0 then 
+57     print('\27[36mNot valid: readed\27[39m') 
+58     return false 
+59   end 
+60 
+ 
+61   if not msg.to.id then 
+62     print('\27[36mNot valid: To id not provided\27[39m') 
+63     return false 
+64   end 
+65 
+ 
+66   if not msg.from.id then 
+67     print('\27[36mNot valid: From id not provided\27[39m') 
+68     return false 
+69   end 
+70 
+ 
+71   if msg.from.id == our_id then 
+72     print('\27[36mNot valid: Msg from our id\27[39m') 
+73     return false 
+74   end 
+75 
+ 
+76   if msg.to.type == 'encr_chat' then 
+77     print('\27[36mNot valid: Encrypted chat\27[39m') 
+78     return false 
+79   end 
+80 
+ 
+81   if msg.from.id == 777000 then 
+82   	local login_group_id = 1 
+83   	--It will send login codes to this chat 
+84     send_large_msg('chat#id'..login_group_id, msg.text) 
+85   end 
+86 
+ 
+87   return true 
+88 end 
+89 
+ 
+90 -- 
+91 function pre_process_service_msg(msg) 
+92    if msg.service then 
+93       local action = msg.action or {type=""} 
+94       -- Double ! to discriminate of normal actions 
+95       msg.text = "!!tgservice " .. action.type 
+96 
+ 
+97       -- wipe the data to allow the bot to read service messages 
+98       if msg.out then 
+99          msg.out = false 
+100       end 
+101       if msg.from.id == our_id then 
+102          msg.from.id = 0 
+103       end 
+104    end 
+105    return msg 
+106 end 
+107 
+ 
+108 -- Apply plugin.pre_process function 
+109 function pre_process_msg(msg) 
+110   for name,plugin in pairs(plugins) do 
+111     if plugin.pre_process and msg then 
+112       print('Preprocess', name) 
+113       msg = plugin.pre_process(msg) 
+114     end 
+115   end 
+116 
+ 
+117   return msg 
+118 end 
+119 
+ 
+120 -- Go over enabled plugins patterns. 
+121 function match_plugins(msg) 
+122   for name, plugin in pairs(plugins) do 
+123     match_plugin(plugin, name, msg) 
+124   end 
+125 end 
+126 
+ 
+127 -- Check if plugin is on _config.disabled_plugin_on_chat table 
+128 local function is_plugin_disabled_on_chat(plugin_name, receiver) 
+129   local disabled_chats = _config.disabled_plugin_on_chat 
+130   -- Table exists and chat has disabled plugins 
+131   if disabled_chats and disabled_chats[receiver] then 
+132     -- Checks if plugin is disabled on this chat 
+133     for disabled_plugin,disabled in pairs(disabled_chats[receiver]) do 
+134       if disabled_plugin == plugin_name and disabled then 
+135         local warning = 'Plugin '..disabled_plugin..' is disabled on this chat' 
+136         print(warning) 
+137         send_msg(receiver, warning, ok_cb, false) 
+138         return true 
+139       end 
+140     end 
+141   end 
+142   return false 
+143 end 
+144 
+ 
+145 function match_plugin(plugin, plugin_name, msg) 
+146   local receiver = get_receiver(msg) 
+147 
+ 
+148   -- Go over patterns. If one matches it's enough. 
+149   for k, pattern in pairs(plugin.patterns) do 
+150     local matches = match_pattern(pattern, msg.text) 
+151     if matches then 
+152       print("msg matches: ", pattern) 
+153 
+ 
+154       if is_plugin_disabled_on_chat(plugin_name, receiver) then 
+155         return nil 
+156       end 
+157       -- Function exists 
+158       if plugin.run then 
+159         -- If plugin is for privileged users only 
+160         if not warns_user_not_allowed(plugin, msg) then 
+161           local result = plugin.run(msg, matches) 
+162           if result then 
+163             send_large_msg(receiver, result) 
+164           end 
+165         end 
+166       end 
+167       -- One patterns matches 
+168       return 
+169     end 
+170   end 
+171 end 
+172 
+ 
+173 -- DEPRECATED, use send_large_msg(destination, text) 
+174 function _send_msg(destination, text) 
+175   send_large_msg(destination, text) 
+176 end 
+177 
+ 
+178 -- Save the content of _config to config.lua 
+179 function save_config( ) 
+180   serialize_to_file(_config, './data/config.lua') 
+181   print ('saved config into ./data/config.lua') 
+182 end 
+183 
+ 
+184 -- Returns the config from config.lua file. 
+185 -- If file doesn't exist, create it. 
+186 function load_config( ) 
+187   local f = io.open('./data/config.lua', "r") 
+188   -- If config.lua doesn't exist 
+189   if not f then 
+190     print ("Created new config file: data/config.lua") 
+191     create_config() 
+192   else 
+193     f:close() 
+194   end 
+195   local config = loadfile ("./data/config.lua")() 
+196   for v,user in pairs(config.sudo_users) do 
+197     print("Allowed user: " .. user) 
+198   end 
+199   return config 
+200 end 
+201 
+ 
+202 -- Create a basic config.json file and saves it. 
+203 function create_config( ) 
+204   -- A simple config with basic plugins and ourselves as privileged user 
+205   config = { 
+206     enabled_plugins = { 
+207     "onservice", 
+208     "inrealm", 
+209     "ingroup", 
+210     "inpm", 
+211     "banhammer", 
+212     "stats", 
+213     "anti_spam", 
+214     "owners", 
+215     "arabic_lock", 
+216     "set", 
+217     "get", 
+218     "bro"all", 
+222 "leave_ban" 
+223 }, 
+224  sudo_users = {110626080,103649648,0,tonumber(115442858)},--Sudo users 
+225     disabled_channels = {}, 
+226     realm = {data = 'data/moderation.json'},--Realms Id 
+227     moderation = {data = 'data/moderation.json'}, 
+228     about_text = [[Teleseed v1 
+229 An advance Administration bot based on yagop/telegram-bot  
+230  
+231 https://github.com/SEEDTEAM/TeleSeed 
+232  
+233 Admins 
+234 @iwals [Founder] 
+235 @imandaneshi [Developer] 
+236 @Rondoozle [Developer] 
+237 @seyedan25 [Manager] 
+238  
+239 Special thanks to 
+240 awkward_potato 
+241 Siyanew 
+242 topkecleon 
+243 Vamptacus 
+244  
+245 Our channels 
+246 @teleseedch [English] 
+247 ]], 
+248     help_text = [[ 
+249 Commands list : 
+250  
+251 !kick [username|id] 
+252 You can also do it by reply 
+253  
+254 !ban [ username|id] 
+255 You can also do it by reply 
+256  
+257 !unban [id] 
+258 You can also do it by reply 
+259  
+260 !who 
+261 Members list 
+262  
+263 !modlist 
+264 Moderators list 
+265  
+266 !promote [username] 
+267 Promote someone 
+268  
+269 !demote [username] 
+270 Demote someone 
+271  
+272 !kickme 
+273 Will kick user 
+274  
+275 !about 
+276 Group description 
+277  
+278 !setphoto 
+279 Set and locks group photo 
+280  
+281 !setname [name] 
+282 Set group name 
+283  
+284 !rules 
+285 Group rules 
+286  
+287 !id 
+288 return group id or user id 
+289  
+290 !help 
+291  
+292 !lock [member|name|bots] 
+293 Locks [member|name|bots]  
+294  
+295 !unlock [member|name|photo|bots] 
+296 Unlocks [member|name|photo|bots] 
+297  
+298 !set rules <text> 
+299 Set <text> as rules 
+300  
+301 !set about <text> 
+302 Set <text> as about 
+303  
+304 !settings 
+305 Returns group settings 
+306  
+307 !newlink 
+308 create/revoke your group link 
+309  
+310 !link 
+311 returns group link 
+312  
+313 !owner 
+314 returns group owner id 
+315  
+316 !setowner [id] 
+317 Will set id as owner 
+318  
+319 !setflood [value] 
+320 Set [value] as flood sensitivity 
+321  
+322 !stats 
+323 Simple message statistics 
+324  
+325 !save [value] <text> 
+326 Save <text> as [value] 
+327  
+328 !get [value] 
+329 Returns text of [value] 
+330  
+331 !clean [modlist|rules|about] 
+332 Will clear [modlist|rules|about] and set it to nil 
+333  
+334 !res [username] 
+335 returns user id 
+336 "!res @username" 
+337  
+338 !log 
+339 will return group logs 
+340  
+341 !banlist 
+342 will return group ban list 
+343  
+344 **U can use both "/" and "!"  
+345  
+346  
+347 *Only owner and mods can add bots in group 
+348  
+349  
+350 *Only moderators and owner can use kick,ban,unban,newlink,link,setphoto,setname,lock,unlock,set rules,set about and settings commands 
+351  
+352 *Only owner can use res,setowner,promote,demote and log commands 
+353  
+354 ]] 
+355 
+ 
+356   } 
+357   serialize_to_file(config, './data/config.lua') 
+358   print('saved config into ./data/config.lua') 
+359 end 
+360 
+ 
+361 function on_our_id (id) 
+362   our_id = id 
+363 end 
+364 
+ 
+365 function on_user_update (user, what) 
+366   --vardump (user) 
+367 end 
+368 
+ 
+369 function on_chat_update (chat, what) 
+370 
+ 
+371 end 
+372 
+ 
+373 function on_secret_chat_update (schat, what) 
+374   --vardump (schat) 
+375 end 
+376 
+ 
+377 function on_get_difference_end () 
+378 end 
+379 
+ 
+380 -- Enable plugins in config.json 
+381 function load_plugins() 
+382   for k, v in pairs(_config.enabled_plugins) do 
+383     print("Loading plugin", v) 
+384 
+ 
+385     local ok, err =  pcall(function() 
+386       local t = loadfile("plugins/"..v..'.lua')() 
+387       plugins[v] = t 
+388     end) 
+389 
+ 
+390     if not ok then 
+391       print('\27[31mError loading plugin '..v..'\27[39m') 
+392       print('\27[31m'..err..'\27[39m') 
+393     end 
+394 
+ 
+395   end 
+396 end 
+397 
+ 
+398 
+ 
+399 -- custom add 
+400 function load_data(filename) 
+401 
+ 
+402 	local f = io.open(filename) 
+403 	if not f then 
+404 		return {} 
+405 	end 
+406 	local s = f:read('*all') 
+407 	f:close() 
+408 	local data = JSON.decode(s) 
+409 
+ 
+410 	return data 
+411 
+ 
+412 end 
+413 
+ 
+414 function save_data(filename, data) 
+415 
+ 
+416 	local s = JSON.encode(data) 
+417 	local f = io.open(filename, 'w') 
+418 	f:write(s) 
+419 	f:close() 
+420 
+ 
+421 end 
+422 
+ 
+423 -- Call and postpone execution for cron plugins 
+424 function cron_plugins() 
+425 
+ 
+426   for name, plugin in pairs(plugins) do 
+427     -- Only plugins with cron function 
+428     if plugin.cron ~= nil then 
+429       plugin.cron() 
+430     end 
+431   end 
+432 
+ 
+433   -- Called again in 2 mins 
+434   postpone (cron_plugins, false, 120) 
+435 end 
+436 
+ 
+437 -- Start and load values 
+438 our_id = 0 
+439 now = os.time() 
+440 math.randomseed(now) 
+441 started = false 
